@@ -5,6 +5,7 @@ import ProductManagement from './components/ProductManagement';
 import InventoryManagement from './components/InventoryManagement';
 import PurchaseManagement from './components/PurchaseManagement';
 import SalesManagement from './components/SalesManagement';
+import SupplierManagement from './components/SupplierManagement';
 import { 
   Product, 
   Supplier, 
@@ -502,6 +503,27 @@ function App() {
     });
   };
 
+  const handleAddSupplier = (supplierData: Omit<Supplier, 'id' | 'createTime'>) => {
+    const newSupplier: Supplier = {
+      ...supplierData,
+      id: Date.now().toString(),
+      createTime: new Date().toISOString(),
+    };
+    setSuppliers([...suppliers, newSupplier]);
+  };
+
+  const handleEditSupplier = (id: string, supplierData: Partial<Supplier>) => {
+    setSuppliers(suppliers.map(supplier => 
+      supplier.id === id 
+        ? { ...supplier, ...supplierData }
+        : supplier
+    ));
+  };
+
+  const handleDeleteSupplier = (id: string) => {
+    setSuppliers(suppliers.filter(supplier => supplier.id !== id));
+  };
+
   const renderContent = () => {
     switch (activeTab) {
       case 'dashboard':
@@ -549,12 +571,12 @@ function App() {
         );
       case 'suppliers':
         return (
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8">
-            <div className="text-center">
-              <h2 className="text-2xl font-semibold text-slate-900 mb-2">供应商管理</h2>
-              <p className="text-slate-600">功能开发中，敬请期待...</p>
-            </div>
-          </div>
+          <SupplierManagement
+            suppliers={suppliers}
+            onAddSupplier={handleAddSupplier}
+            onEditSupplier={handleEditSupplier}
+            onDeleteSupplier={handleDeleteSupplier}
+          />
         );
       case 'customers':
         return (
