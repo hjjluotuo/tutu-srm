@@ -6,6 +6,7 @@ import InventoryManagement from './components/InventoryManagement';
 import PurchaseManagement from './components/PurchaseManagement';
 import SalesManagement from './components/SalesManagement';
 import SupplierManagement from './components/SupplierManagement';
+import CustomerManagement from './components/CustomerManagement';
 import { 
   Product, 
   Supplier, 
@@ -524,6 +525,27 @@ function App() {
     setSuppliers(suppliers.filter(supplier => supplier.id !== id));
   };
 
+  const handleAddCustomer = (customerData: Omit<Customer, 'id' | 'createTime'>) => {
+    const newCustomer: Customer = {
+      ...customerData,
+      id: Date.now().toString(),
+      createTime: new Date().toISOString(),
+    };
+    setCustomers([...customers, newCustomer]);
+  };
+
+  const handleEditCustomer = (id: string, customerData: Partial<Customer>) => {
+    setCustomers(customers.map(customer => 
+      customer.id === id 
+        ? { ...customer, ...customerData }
+        : customer
+    ));
+  };
+
+  const handleDeleteCustomer = (id: string) => {
+    setCustomers(customers.filter(customer => customer.id !== id));
+  };
+
   const renderContent = () => {
     switch (activeTab) {
       case 'dashboard':
@@ -580,12 +602,12 @@ function App() {
         );
       case 'customers':
         return (
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8">
-            <div className="text-center">
-              <h2 className="text-2xl font-semibold text-slate-900 mb-2">客户管理</h2>
-              <p className="text-slate-600">功能开发中，敬请期待...</p>
-            </div>
-          </div>
+          <CustomerManagement
+            customers={customers}
+            onAddCustomer={handleAddCustomer}
+            onEditCustomer={handleEditCustomer}
+            onDeleteCustomer={handleDeleteCustomer}
+          />
         );
       case 'reports':
         return (
