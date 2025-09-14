@@ -7,6 +7,7 @@ import PurchaseManagement from './components/PurchaseManagement';
 import SalesManagement from './components/SalesManagement';
 import SupplierManagement from './components/SupplierManagement';
 import CustomerManagement from './components/CustomerManagement';
+import CustomerManagement from './components/CustomerManagement';
 import { 
   Product, 
   Supplier, 
@@ -523,6 +524,27 @@ function App() {
 
   const handleDeleteSupplier = (id: string) => {
     setSuppliers(suppliers.filter(supplier => supplier.id !== id));
+  };
+
+  const handleAddCustomer = (customerData: Omit<Customer, 'id' | 'createTime'>) => {
+    const newCustomer: Customer = {
+      ...customerData,
+      id: Date.now().toString(),
+      createTime: new Date().toISOString(),
+    };
+    setCustomers([...customers, newCustomer]);
+  };
+
+  const handleEditCustomer = (id: string, customerData: Partial<Customer>) => {
+    setCustomers(customers.map(customer => 
+      customer.id === id 
+        ? { ...customer, ...customerData }
+        : customer
+    ));
+  };
+
+  const handleDeleteCustomer = (id: string) => {
+    setCustomers(customers.filter(customer => customer.id !== id));
   };
 
   const handleAddCustomer = (customerData: Omit<Customer, 'id' | 'createTime'>) => {
