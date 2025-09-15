@@ -7,6 +7,8 @@ import PurchaseManagement from './components/PurchaseManagement';
 import SalesManagement from './components/SalesManagement';
 import SupplierManagement from './components/SupplierManagement';
 import CustomerManagement from './components/CustomerManagement';
+import ReportsAnalysis from './components/ReportsAnalysis';
+import SystemSettings from './components/SystemSettings';
 import { 
   Product, 
   Supplier, 
@@ -611,21 +613,18 @@ function App() {
         );
       case 'reports':
         return (
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8">
-            <div className="text-center">
-              <h2 className="text-2xl font-semibold text-slate-900 mb-2">报表分析</h2>
-              <p className="text-slate-600">功能开发中，敬请期待...</p>
-            </div>
-          </div>
+          <ReportsAnalysis
+            products={products}
+            suppliers={suppliers}
+            customers={customers}
+            purchaseOrders={purchaseOrders}
+            saleOrders={saleOrders}
+            inventoryRecords={inventoryRecords}
+          />
         );
       case 'settings':
         return (
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8">
-            <div className="text-center">
-              <h2 className="text-2xl font-semibold text-slate-900 mb-2">系统设置</h2>
-              <p className="text-slate-600">功能开发中，敬请期待...</p>
-            </div>
-          </div>
+          <SystemSettings />
         );
       default:
         return <Dashboard stats={dashboardStats} />;
