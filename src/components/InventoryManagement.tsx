@@ -1,26 +1,37 @@
 import React, { useState } from 'react';
-import { Package, TrendingUp, TrendingDown, RotateCcw, Search, Plus, ArrowUpCircle, ArrowDownCircle, Scan } from 'lucide-react';
-import { Product, InventoryRecord } from '../types';
+import { Package, TrendingUp, TrendingDown, RotateCcw, Search, Plus, ArrowUpCircle, ArrowDownCircle, Scan, Archive, Calendar, Truck } from 'lucide-react';
+import { Product, InventoryRecord, InventoryBatch, BatchMovement } from '../types';
 import BarcodeScanner from './BarcodeScanner';
 
 interface InventoryManagementProps {
   products: Product[];
   inventoryRecords: InventoryRecord[];
+  inventoryBatches: InventoryBatch[];
+  batchMovements: BatchMovement[];
   onAddInventoryRecord: (record: Omit<InventoryRecord, 'id' | 'createTime'>) => void;
+  onAddInventoryBatch: (batch: Omit<InventoryBatch, 'id' | 'createTime'>) => void;
+  onUpdateInventoryBatch: (id: string, updates: Partial<InventoryBatch>) => void;
+  onAddBatchMovement: (movement: Omit<BatchMovement, 'id' | 'createTime'>) => void;
 }
 
 const InventoryManagement: React.FC<InventoryManagementProps> = ({
   products,
   inventoryRecords,
+  inventoryBatches,
+  batchMovements,
   onAddInventoryRecord,
+  onAddInventoryBatch,
+  onUpdateInventoryBatch,
+  onAddBatchMovement,
 }) => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'records' | 'inbound' | 'outbound' | 'adjust'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'batches' | 'records' | 'inbound' | 'outbound' | 'adjust'>('overview');
   const [searchTerm, setSearchTerm] = useState('');
   const [showInboundForm, setShowInboundForm] = useState(false);
   const [showOutboundForm, setShowOutboundForm] = useState(false);
   const [showAdjustForm, setShowAdjustForm] = useState(false);
   const [showInboundScanner, setShowInboundScanner] = useState(false);
   const [showOutboundScanner, setShowOutboundScanner] = useState(false);
+  const [viewingBatches, setViewingBatches] = useState<string | null>(null);
   
   const [inboundData, setInboundData] = useState({
     productId: '',
@@ -28,6 +39,8 @@ const InventoryManagement: React.FC<InventoryManagementProps> = ({
     reason: '',
     supplier: '',
     batchNo: '',
+    productionDate: '',
+    expiryDate: '',
     notes: '',
   });
 
@@ -37,6 +50,7 @@ const InventoryManagement: React.FC<InventoryManagementProps> = ({
     reason: '',
     customer: '',
     orderNo: '',
+    selectedBatches: [] as Array<{ batchId: string; quantity: number }>,
     notes: '',
   });
 
@@ -58,9 +72,36 @@ const InventoryManagement: React.FC<InventoryManagementProps> = ({
     )
     .sort((a, b) => new Date(b.createTime).getTime() - new Date(a.createTime).getTime());
 
+  const filteredBatches = inventoryBatches
+    .filter((batch) => 
+      batch.productName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      batch.batchNo.toLowerCase().includes(searchTerm.toLowerCase())
+    )
+    .sort((a, b) => new Date(b.createTime).getTime() - new Date(a.createTime).getTime());
+
   // 按类型筛选记录
   const inboundRecords = filteredRecords.filter(record => record.type === 'in');
   const outboundRecords = filteredRecords.filter(record => record.type === 'out');
+
+  // 获取商品的批次信息
+  const getProductBatches = (productId: string) => {
+    return inventoryBatches.filter(batch => 
+      batch.productId === productId && 
+      batch.remainingQuantity > 0 && 
+      batch.status === 'active'
+    ).sort((a, b) => new Date(a.createTime).getTime() - new Date(b.createTime).getTime()); // FIFO
+  };
+
+  // 生成批次号
+  const generateBatchNo = () => {
+    const date = new Date();
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const time = String(date.getHours()).padStart(2, '0') + String(date.getMinutes()).padStart(2, '0');
+    const random = Math.floor(Math.random() * 100).toString().padStart(2, '0');
+    return `B${year}${month}${day}${time}${random}`;
+  };
 
   // 根据条码查找商品
   const findProductByBarcode = (barcode: string) => {
@@ -93,6 +134,24 @@ const InventoryManagement: React.FC<InventoryManagementProps> = ({
 
     const quantity = parseInt(inboundData.quantity);
     const newStock = product.stock + quantity;
+    const batchNo = inboundData.batchNo || generateBatchNo();
+
+    // 创建批次记录
+    onAddInventoryBatch({
+      batchNo,
+      productId: product.id,
+      productName: product.name,
+      quantity,
+      remainingQuantity: quantity,
+      purchasePrice: product.purchasePrice,
+      supplierId: 'manual-entry',
+      supplierName: inboundData.supplier || '手动入库',
+      purchaseOrderId: 'manual',
+      purchaseOrderNo: '手动入库',
+      productionDate: inboundData.productionDate || undefined,
+      expiryDate: inboundData.expiryDate || undefined,
+      status: 'active',
+    });
 
     onAddInventoryRecord({
       productId: product.id,
@@ -102,6 +161,7 @@ const InventoryManagement: React.FC<InventoryManagementProps> = ({
       beforeStock: product.stock,
       afterStock: newStock,
       reason: `${inboundData.reason}${inboundData.supplier ? ` - 供应商: ${inboundData.supplier}` : ''}${inboundData.batchNo ? ` - 批次: ${inboundData.batchNo}` : ''}${inboundData.notes ? ` - 备注: ${inboundData.notes}` : ''}`,
+      batchNo,
       operatorId: 'current-user',
       operatorName: '系统管理员',
     });
@@ -112,6 +172,8 @@ const InventoryManagement: React.FC<InventoryManagementProps> = ({
       reason: '',
       supplier: '',
       batchNo: '',
+      productionDate: '',
+      expiryDate: '',
       notes: '',
     });
     setShowInboundForm(false);
@@ -128,6 +190,36 @@ const InventoryManagement: React.FC<InventoryManagementProps> = ({
       return;
     }
 
+    // 自动分配批次（FIFO）
+    const availableBatches = getProductBatches(outboundData.productId);
+    let remainingQuantity = quantity;
+    const usedBatches: Array<{ batchId: string; batchNo: string; quantity: number }> = [];
+
+    for (const batch of availableBatches) {
+      if (remainingQuantity <= 0) break;
+      
+      const useQuantity = Math.min(remainingQuantity, batch.remainingQuantity);
+      usedBatches.push({
+        batchId: batch.id,
+        batchNo: batch.batchNo,
+        quantity: useQuantity,
+      });
+      
+      // 更新批次剩余数量
+      const newRemainingQuantity = batch.remainingQuantity - useQuantity;
+      onUpdateInventoryBatch(batch.id, {
+        remainingQuantity: newRemainingQuantity,
+        status: newRemainingQuantity === 0 ? 'exhausted' : 'active',
+      });
+      
+      remainingQuantity -= useQuantity;
+    }
+
+    if (remainingQuantity > 0) {
+      alert('可用批次库存不足！');
+      return;
+    }
+
     const newStock = product.stock - quantity;
 
     onAddInventoryRecord({
@@ -138,8 +230,25 @@ const InventoryManagement: React.FC<InventoryManagementProps> = ({
       beforeStock: product.stock,
       afterStock: newStock,
       reason: `${outboundData.reason}${outboundData.customer ? ` - 客户: ${outboundData.customer}` : ''}${outboundData.orderNo ? ` - 订单号: ${outboundData.orderNo}` : ''}${outboundData.notes ? ` - 备注: ${outboundData.notes}` : ''}`,
+      batchNo: usedBatches.map(b => b.batchNo).join(', '),
+      relatedOrderNo: outboundData.orderNo,
       operatorId: 'current-user',
       operatorName: '系统管理员',
+    });
+
+    // 记录批次移动
+    usedBatches.forEach(usedBatch => {
+      onAddBatchMovement({
+        batchId: usedBatch.batchId,
+        batchNo: usedBatch.batchNo,
+        productId: product.id,
+        type: 'out',
+        quantity: usedBatch.quantity,
+        remainingQuantity: inventoryBatches.find(b => b.id === usedBatch.batchId)?.remainingQuantity || 0,
+        relatedOrderId: 'manual',
+        relatedOrderNo: outboundData.orderNo || '手动出库',
+        relatedOrderType: 'sale',
+      });
     });
 
     setOutboundData({
@@ -148,6 +257,7 @@ const InventoryManagement: React.FC<InventoryManagementProps> = ({
       reason: '',
       customer: '',
       orderNo: '',
+      selectedBatches: [],
       notes: '',
     });
     setShowOutboundForm(false);
@@ -225,6 +335,7 @@ const InventoryManagement: React.FC<InventoryManagementProps> = ({
         <nav className="-mb-px flex space-x-8">
           {[
             { key: 'overview', label: '库存概览', icon: Package },
+            { key: 'batches', label: '批次管理', icon: Archive },
             { key: 'inbound', label: '入库管理', icon: ArrowUpCircle },
             { key: 'outbound', label: '出库管理', icon: ArrowDownCircle },
             { key: 'records', label: '所有记录', icon: TrendingUp },
@@ -345,12 +456,103 @@ const InventoryManagement: React.FC<InventoryManagementProps> = ({
                         >
                           <ArrowDownCircle className="h-4 w-4" />
                         </button>
+                        <button
+                          onClick={() => setViewingBatches(product.id)}
+                          className="text-blue-600 hover:bg-blue-100 p-1 rounded"
+                          title="查看批次"
+                        >
+                          <Archive className="h-4 w-4" />
+                        </button>
                       </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* 批次管理 */}
+      {activeTab === 'batches' && (
+        <div className="space-y-6">
+          <div className="flex justify-between items-center">
+            <h2 className="text-xl font-semibold text-slate-900">批次管理</h2>
+          </div>
+          
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-slate-50 border-b border-slate-200">
+                  <tr>
+                    <th className="text-left px-6 py-4 text-sm font-medium text-slate-900">批次信息</th>
+                    <th className="text-left px-6 py-4 text-sm font-medium text-slate-900">商品信息</th>
+                    <th className="text-left px-6 py-4 text-sm font-medium text-slate-900">数量</th>
+                    <th className="text-left px-6 py-4 text-sm font-medium text-slate-900">供应商</th>
+                    <th className="text-left px-6 py-4 text-sm font-medium text-slate-900">日期信息</th>
+                    <th className="text-left px-6 py-4 text-sm font-medium text-slate-900">状态</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {filteredBatches.map((batch) => (
+                    <tr key={batch.id} className="hover:bg-slate-50">
+                      <td className="px-6 py-4">
+                        <div className="flex items-center space-x-3">
+                          <div className="bg-purple-100 p-2 rounded-lg">
+                            <Archive className="h-5 w-5 text-purple-600" />
+                          </div>
+                          <div>
+                            <p className="font-medium text-slate-900">{batch.batchNo}</p>
+                            <p className="text-sm text-slate-500">采购单: {batch.purchaseOrderNo}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <p className="font-medium text-slate-900">{batch.productName}</p>
+                        <p className="text-sm text-slate-500">采购价: ¥{batch.purchasePrice}</p>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div>
+                          <p className="text-slate-900">剩余: <span className="font-medium">{batch.remainingQuantity}</span></p>
+                          <p className="text-sm text-slate-500">总量: {batch.quantity}</p>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="flex items-center space-x-2">
+                          <Truck className="h-4 w-4 text-slate-400" />
+                          <span className="text-slate-900">{batch.supplierName}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <div className="space-y-1">
+                          <div className="flex items-center space-x-2">
+                            <Calendar className="h-4 w-4 text-slate-400" />
+                            <span className="text-sm text-slate-600">入库: {new Date(batch.createTime).toLocaleDateString()}</span>
+                          </div>
+                          {batch.productionDate && (
+                            <p className="text-sm text-slate-500">生产: {batch.productionDate}</p>
+                          )}
+                          {batch.expiryDate && (
+                            <p className="text-sm text-slate-500">过期: {batch.expiryDate}</p>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4">
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          batch.status === 'active' 
+                            ? 'bg-green-100 text-green-800'
+                            : batch.status === 'exhausted'
+                            ? 'bg-gray-100 text-gray-800'
+                            : 'bg-red-100 text-red-800'
+                        }`}>
+                          {batch.status === 'active' ? '可用' : batch.status === 'exhausted' ? '已用完' : '已过期'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
@@ -622,6 +824,24 @@ const InventoryManagement: React.FC<InventoryManagementProps> = ({
                 />
               </div>
               <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">生产日期</label>
+                <input
+                  type="date"
+                  value={inboundData.productionDate}
+                  onChange={(e) => setInboundData({ ...inboundData, productionDate: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">过期日期</label>
+                <input
+                  type="date"
+                  value={inboundData.expiryDate}
+                  onChange={(e) => setInboundData({ ...inboundData, expiryDate: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                />
+              </div>
+              <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">备注</label>
                 <textarea
                   rows={2}
@@ -647,6 +867,91 @@ const InventoryManagement: React.FC<InventoryManagementProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 查看商品批次 */}
+      {viewingBatches && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl p-6 w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-start mb-6">
+              <div>
+                <h3 className="text-xl font-semibold text-slate-900">商品批次详情</h3>
+                <p className="text-slate-600">
+                  {products.find(p => p.id === viewingBatches)?.name}
+                </p>
+              </div>
+              <button
+                onClick={() => setViewingBatches(null)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <Package className="h-6 w-6" />
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              {getProductBatches(viewingBatches).map((batch) => (
+                <div key={batch.id} className="p-4 border border-slate-200 rounded-lg">
+                  <div className="flex justify-between items-start mb-2">
+                    <div>
+                      <p className="font-medium text-slate-900">{batch.batchNo}</p>
+                      <p className="text-sm text-slate-500">供应商: {batch.supplierName}</p>
+                    </div>
+                    <span className={`px-2 py-1 rounded text-xs font-medium ${
+                      batch.status === 'active' 
+                        ? 'bg-green-100 text-green-800'
+                        : 'bg-gray-100 text-gray-800'
+                    }`}>
+                      {batch.status === 'active' ? '可用' : '已用完'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <div>
+                      <p className="text-slate-500">剩余数量</p>
+                      <p className="font-medium">{batch.remainingQuantity}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">总数量</p>
+                      <p className="font-medium">{batch.quantity}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">采购价</p>
+                      <p className="font-medium">¥{batch.purchasePrice}</p>
+                    </div>
+                    <div>
+                      <p className="text-slate-500">入库时间</p>
+                      <p className="font-medium">{new Date(batch.createTime).toLocaleDateString()}</p>
+                    </div>
+                  </div>
+                  {(batch.productionDate || batch.expiryDate) && (
+                    <div className="mt-2 pt-2 border-t border-slate-100">
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        {batch.productionDate && (
+                          <div>
+                            <p className="text-slate-500">生产日期</p>
+                            <p className="font-medium">{batch.productionDate}</p>
+                          </div>
+                        )}
+                        {batch.expiryDate && (
+                          <div>
+                            <p className="text-slate-500">过期日期</p>
+                            <p className="font-medium">{batch.expiryDate}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+              
+              {getProductBatches(viewingBatches).length === 0 && (
+                <div className="text-center py-8 text-slate-500">
+                  <Archive className="h-12 w-12 mx-auto mb-2 text-slate-300" />
+                  <p>该商品暂无可用批次</p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -736,6 +1041,25 @@ const InventoryManagement: React.FC<InventoryManagementProps> = ({
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
                 />
               </div>
+              
+              {/* 显示可用批次信息 */}
+              {outboundData.productId && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">可用批次（将按先进先出自动分配）</label>
+                  <div className="max-h-32 overflow-y-auto border border-slate-200 rounded-lg p-2">
+                    {getProductBatches(outboundData.productId).map((batch) => (
+                      <div key={batch.id} className="flex justify-between items-center py-1 text-sm">
+                        <span>{batch.batchNo}</span>
+                        <span className="text-slate-500">可用: {batch.remainingQuantity}</span>
+                      </div>
+                    ))}
+                    {getProductBatches(outboundData.productId).length === 0 && (
+                      <p className="text-sm text-slate-500 text-center py-2">暂无可用批次</p>
+                    )}
+                  </div>
+                </div>
+              )}
+              
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">备注</label>
                 <textarea

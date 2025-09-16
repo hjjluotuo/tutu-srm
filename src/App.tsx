@@ -16,6 +16,8 @@ import {
   PurchaseOrder, 
   SaleOrder, 
   InventoryRecord, 
+  InventoryBatch,
+  BatchMovement,
   DashboardStats 
 } from './types';
 
@@ -100,6 +102,9 @@ function App() {
       beforeStock: 10,
       afterStock: 30,
       reason: '采购入库',
+      batchNo: 'B2025012010001',
+      relatedOrderId: '1',
+      relatedOrderNo: 'PO-20250120-001',
       operatorId: 'user1',
       operatorName: '张三',
       createTime: '2025-01-20T09:00:00Z',
@@ -113,8 +118,63 @@ function App() {
       beforeStock: 13,
       afterStock: 8,
       reason: '销售出库',
+      batchNo: 'B2025012010002',
+      relatedOrderId: '1',
+      relatedOrderNo: 'SO-20250120-001',
       operatorId: 'user1',
       operatorName: '李四',
+      createTime: '2025-01-20T14:30:00Z',
+    },
+  ]);
+
+  const [inventoryBatches, setInventoryBatches] = useState<InventoryBatch[]>([
+    {
+      id: '1',
+      batchNo: 'B2025012010001',
+      productId: '1',
+      productName: '苹果iPhone 15',
+      quantity: 20,
+      remainingQuantity: 15,
+      purchasePrice: 5500,
+      supplierId: '1',
+      supplierName: '苹果科技有限公司',
+      purchaseOrderId: '1',
+      purchaseOrderNo: 'PO-20250120-001',
+      productionDate: '2025-01-15',
+      expiryDate: '2027-01-15',
+      status: 'active',
+      createTime: '2025-01-20T09:00:00Z',
+    },
+    {
+      id: '2',
+      batchNo: 'B2025012010002',
+      productId: '2',
+      productName: '华为Mate 60',
+      quantity: 15,
+      remainingQuantity: 8,
+      purchasePrice: 4800,
+      supplierId: '2',
+      supplierName: '华为供应链公司',
+      purchaseOrderId: '2',
+      purchaseOrderNo: 'PO-20250120-002',
+      productionDate: '2025-01-18',
+      status: 'active',
+      createTime: '2025-01-20T10:00:00Z',
+    },
+  ]);
+
+  const [batchMovements, setBatchMovements] = useState<BatchMovement[]>([
+    {
+      id: '1',
+      batchId: '1',
+      batchNo: 'B2025012010001',
+      productId: '1',
+      type: 'out',
+      quantity: 5,
+      remainingQuantity: 15,
+      relatedOrderId: '1',
+      relatedOrderNo: 'SO-20250120-001',
+      relatedOrderType: 'sale',
       createTime: '2025-01-20T14:30:00Z',
     },
   ]);
@@ -342,6 +402,30 @@ function App() {
     setInventoryRecords([newRecord, ...inventoryRecords]);
   };
 
+  const handleAddInventoryBatch = (batchData: Omit<InventoryBatch, 'id' | 'createTime'>) => {
+    const newBatch: InventoryBatch = {
+      ...batchData,
+      id: Date.now().toString(),
+      createTime: new Date().toISOString(),
+    };
+    setInventoryBatches([...inventoryBatches, newBatch]);
+  };
+
+  const handleUpdateInventoryBatch = (id: string, updates: Partial<InventoryBatch>) => {
+    setInventoryBatches(inventoryBatches.map(batch => 
+      batch.id === id ? { ...batch, ...updates } : batch
+    ));
+  };
+
+  const handleAddBatchMovement = (movementData: Omit<BatchMovement, 'id' | 'createTime'>) => {
+    const newMovement: BatchMovement = {
+      ...movementData,
+      id: Date.now().toString(),
+      createTime: new Date().toISOString(),
+    };
+    setBatchMovements([...batchMovements, newMovement]);
+  };
+
   const handleAddPurchaseOrder = (orderData: Omit<PurchaseOrder, 'id' | 'createTime'>) => {
     const newOrder: PurchaseOrder = {
       ...orderData,
@@ -404,6 +488,33 @@ function App() {
               : p
           ));
 
+          // 生成批次号
+          const date = new Date();
+          const year = date.getFullYear();
+          const month = String(date.getMonth() + 1).padStart(2, '0');
+          const day = String(date.getDate()).padStart(2, '0');
+          const time = String(date.getHours()).padStart(2, '0') + String(date.getMinutes()).padStart(2, '0');
+          const random = Math.floor(Math.random() * 100).toString().padStart(2, '0');
+          const batchNo = `B${year}${month}${day}${time}${random}`;
+
+          // 创建批次记录
+          const newBatch: InventoryBatch = {
+            id: Date.now().toString() + '-' + receiveItem.productId,
+            batchNo,
+            productId: receiveItem.productId,
+            productName: product.name,
+            quantity: receiveItem.receivedQuantity,
+            remainingQuantity: receiveItem.receivedQuantity,
+            purchasePrice: updatedItems.find(i => i.productId === receiveItem.productId)?.price || product.purchasePrice,
+            supplierId: order.supplierId,
+            supplierName: order.supplierName,
+            purchaseOrderId: order.id,
+            purchaseOrderNo: order.orderNo,
+            status: 'active',
+            createTime: new Date().toISOString(),
+          };
+          setInventoryBatches(prev => [...prev, newBatch]);
+
           // 添加库存记录
           const newRecord: InventoryRecord = {
             id: Date.now().toString() + '-' + receiveItem.productId,
@@ -414,11 +525,30 @@ function App() {
             beforeStock: product.stock,
             afterStock: newStock,
             reason: `采购入库 - 采购单: ${order.orderNo}`,
+            batchNo,
+            relatedOrderId: order.id,
+            relatedOrderNo: order.orderNo,
             operatorId: 'current-user',
             operatorName: '系统管理员',
             createTime: new Date().toISOString(),
           };
           setInventoryRecords(prev => [newRecord, ...prev]);
+
+          // 添加批次移动记录
+          const newMovement: BatchMovement = {
+            id: Date.now().toString() + '-movement-' + receiveItem.productId,
+            batchId: newBatch.id,
+            batchNo,
+            productId: receiveItem.productId,
+            type: 'in',
+            quantity: receiveItem.receivedQuantity,
+            remainingQuantity: receiveItem.receivedQuantity,
+            relatedOrderId: order.id,
+            relatedOrderNo: order.orderNo,
+            relatedOrderType: 'purchase',
+            createTime: new Date().toISOString(),
+          };
+          setBatchMovements(prev => [...prev, newMovement]);
         }
       }
     });
@@ -474,11 +604,65 @@ function App() {
         : o
     ));
 
-    // 更新商品库存（减少库存）
+    // 更新商品库存和批次（减少库存）
     items.forEach(shipItem => {
       if (shipItem.shippedQuantity > 0) {
         const product = products.find(p => p.id === shipItem.productId);
         if (product) {
+          // 获取可用批次（FIFO）
+          const availableBatches = inventoryBatches
+            .filter(batch => 
+              batch.productId === shipItem.productId && 
+              batch.remainingQuantity > 0 && 
+              batch.status === 'active'
+            )
+            .sort((a, b) => new Date(a.createTime).getTime() - new Date(b.createTime).getTime());
+
+          let remainingQuantity = shipItem.shippedQuantity;
+          const usedBatches: Array<{ batchId: string; batchNo: string; quantity: number }> = [];
+
+          // 按FIFO分配批次
+          for (const batch of availableBatches) {
+            if (remainingQuantity <= 0) break;
+            
+            const useQuantity = Math.min(remainingQuantity, batch.remainingQuantity);
+            usedBatches.push({
+              batchId: batch.id,
+              batchNo: batch.batchNo,
+              quantity: useQuantity,
+            });
+            
+            // 更新批次剩余数量
+            const newRemainingQuantity = batch.remainingQuantity - useQuantity;
+            setInventoryBatches(prev => prev.map(b => 
+              b.id === batch.id 
+                ? { 
+                    ...b, 
+                    remainingQuantity: newRemainingQuantity,
+                    status: newRemainingQuantity === 0 ? 'exhausted' : 'active'
+                  }
+                : b
+            ));
+            
+            remainingQuantity -= useQuantity;
+
+            // 添加批次移动记录
+            const newMovement: BatchMovement = {
+              id: Date.now().toString() + '-' + batch.id + '-' + useQuantity,
+              batchId: batch.id,
+              batchNo: batch.batchNo,
+              productId: shipItem.productId,
+              type: 'out',
+              quantity: useQuantity,
+              remainingQuantity: newRemainingQuantity,
+              relatedOrderId: order.id,
+              relatedOrderNo: order.orderNo,
+              relatedOrderType: 'sale',
+              createTime: new Date().toISOString(),
+            };
+            setBatchMovements(prev => [...prev, newMovement]);
+          }
+
           const newStock = product.stock - shipItem.shippedQuantity;
           setProducts(products.map(p => 
             p.id === shipItem.productId 
@@ -496,6 +680,9 @@ function App() {
             beforeStock: product.stock,
             afterStock: newStock,
             reason: `销售出库 - 销售单: ${order.orderNo}`,
+            batchNo: usedBatches.map(b => b.batchNo).join(', '),
+            relatedOrderId: order.id,
+            relatedOrderNo: order.orderNo,
             operatorId: 'current-user',
             operatorName: '系统管理员',
             createTime: new Date().toISOString(),
@@ -566,7 +753,12 @@ function App() {
           <InventoryManagement
             products={products}
             inventoryRecords={inventoryRecords}
+            inventoryBatches={inventoryBatches}
+            batchMovements={batchMovements}
             onAddInventoryRecord={handleAddInventoryRecord}
+            onAddInventoryBatch={handleAddInventoryBatch}
+            onUpdateInventoryBatch={handleUpdateInventoryBatch}
+            onAddBatchMovement={handleAddBatchMovement}
           />
         );
       case 'purchase':
