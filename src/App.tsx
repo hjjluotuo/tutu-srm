@@ -755,6 +755,8 @@ function App() {
             inventoryRecords={inventoryRecords}
             inventoryBatches={inventoryBatches}
             batchMovements={batchMovements}
+            purchaseOrders={purchaseOrders}
+            saleOrders={saleOrders}
             onAddInventoryRecord={handleAddInventoryRecord}
             onAddInventoryBatch={handleAddInventoryBatch}
             onUpdateInventoryBatch={handleUpdateInventoryBatch}
