@@ -86,6 +86,11 @@ export interface SaleItem {
   quantity: number;
   price: number;
   shippedQuantity: number;
+  batches?: Array<{
+    batchId: string;
+    batchNo: string;
+    quantity: number;
+  }>;
   amount: number;
 }
 
@@ -98,8 +103,43 @@ export interface InventoryRecord {
   beforeStock: number;
   afterStock: number;
   reason: string;
+  batchNo?: string;
+  relatedOrderId?: string;
+  relatedOrderNo?: string;
   operatorId: string;
   operatorName: string;
+  createTime: string;
+}
+
+export interface InventoryBatch {
+  id: string;
+  batchNo: string;
+  productId: string;
+  productName: string;
+  quantity: number;
+  remainingQuantity: number;
+  purchasePrice: number;
+  supplierId: string;
+  supplierName: string;
+  purchaseOrderId: string;
+  purchaseOrderNo: string;
+  productionDate?: string;
+  expiryDate?: string;
+  status: 'active' | 'exhausted' | 'expired';
+  createTime: string;
+}
+
+export interface BatchMovement {
+  id: string;
+  batchId: string;
+  batchNo: string;
+  productId: string;
+  type: 'in' | 'out';
+  quantity: number;
+  remainingQuantity: number;
+  relatedOrderId: string;
+  relatedOrderNo: string;
+  relatedOrderType: 'purchase' | 'sale';
   createTime: string;
 }
 
@@ -111,5 +151,11 @@ export interface DashboardStats {
   pendingPurchases: number;
   pendingSales: number;
   thisMonthPurchaseAmount: number;
+  batches?: Array<{
+    batchNo: string;
+    quantity: number;
+    productionDate?: string;
+    expiryDate?: string;
+  }>;
   thisMonthSaleAmount: number;
 }
