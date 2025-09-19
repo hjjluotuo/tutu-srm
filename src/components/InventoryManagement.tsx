@@ -14,9 +14,12 @@ import {
   CheckCircle,
   XCircle,
   Clock,
-  Archive
+  Archive,
+  Camera,
+  X
 } from 'lucide-react';
 import { Product, InventoryRecord, InventoryBatch, BatchMovement, PurchaseOrder, SaleOrder } from '../types';
+import BarcodeScanner from './BarcodeScanner';
 
 interface InventoryManagementProps {
   products: Product[];
@@ -43,17 +46,39 @@ const InventoryManagement: React.FC<InventoryManagementProps> = ({
   onUpdateInventoryBatch,
   onAddBatchMovement,
 }) => {
-  const [activeTab, setActiveTab] = useState<'records' | 'batches' | 'movements' | 'adjust'>('records');
+  const [activeTab, setActiveTab] = useState<'records' | 'batches' | 'movements'>('records');
   const [searchTerm, setSearchTerm] = useState('');
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [viewingBatches, setViewingBatches] = useState<string | null>(null);
+  const [showInForm, setShowInForm] = useState(false);
+  const [showOutForm, setShowOutForm] = useState(false);
+  const [showAdjustForm, setShowAdjustForm] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
+  const [scannerType, setScannerType] = useState<'in' | 'out'>('in');
 
-  const [recordData, setRecordData] = useState({
+  // 入库表单数据
+  const [inData, setInData] = useState({
     productId: '',
-    type: 'in' as 'in' | 'out' | 'adjust',
     quantity: '',
-    reason: '',
-    relatedOrderId: '',
+    purchaseOrderId: '',
+    reason: '采购入库',
+    operatorName: '系统管理员',
+  });
+
+  // 出库表单数据
+  const [outData, setOutData] = useState({
+    productId: '',
+    quantity: '',
+    saleOrderId: '',
+    selectedBatches: [] as Array<{ batchId: string; quantity: number }>,
+    reason: '销售出库',
+    operatorName: '系统管理员',
+  });
+
+  // 调整表单数据
+  const [adjustData, setAdjustData] = useState({
+    productId: '',
+    quantity: '',
+    adjustType: 'increase' as 'increase' | 'decrease',
+    reason: '库存调整',
     operatorName: '系统管理员',
   });
 
@@ -79,7 +104,7 @@ const InventoryManagement: React.FC<InventoryManagementProps> = ({
     order.items.some(item => item.shippedQuantity < item.quantity)
   );
 
-  // 生成批次号：商品编码-年月日-3位序号
+  // 生成批次号：商品编码-年月日-时分-随机2位
   const generateBatchNo = (productId: string) => {
     const product = products.find(p => p.id === productId);
     if (!product) return '';
@@ -88,46 +113,56 @@ const InventoryManagement: React.FC<InventoryManagementProps> = ({
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');
-    const dateStr = `${year}${month}${day}`;
+    const hour = String(date.getHours()).padStart(2, '0');
+    const minute = String(date.getMinutes()).padStart(2, '0');
+    const random = Math.floor(Math.random() * 100).toString().padStart(2, '0');
     
-    // 查找当天该商品的批次数量，生成序号
-    const todayBatches = inventoryBatches.filter(batch => 
-      batch.productId === productId && 
-      batch.batchNo.includes(`${product.code}-${dateStr}`)
-    );
-    
-    const sequence = String(todayBatches.length + 1).padStart(3, '0');
-    return `${product.code}-${dateStr}-${sequence}`;
+    return `${product.code}-${year}${month}${day}-${hour}${minute}-${random}`;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // 获取商品的可用批次（FIFO排序）
+  const getAvailableBatches = (productId: string) => {
+    return inventoryBatches
+      .filter(batch => 
+        batch.productId === productId && 
+        batch.remainingQuantity > 0 && 
+        batch.status === 'active'
+      )
+      .sort((a, b) => new Date(a.createTime).getTime() - new Date(b.createTime).getTime());
+  };
+
+  // 处理条码扫描
+  const handleBarcodeScan = (barcode: string) => {
+    const product = products.find(p => p.barcode === barcode || p.code === barcode);
+    if (product) {
+      if (scannerType === 'in') {
+        setInData(prev => ({ ...prev, productId: product.id }));
+      } else {
+        setOutData(prev => ({ ...prev, productId: product.id }));
+      }
+    } else {
+      alert('未找到对应的商品！');
+    }
+    setShowScanner(false);
+  };
+
+  // 入库处理
+  const handleInSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
-    const product = products.find(p => p.id === recordData.productId);
+    const product = products.find(p => p.id === inData.productId);
     if (!product) return;
 
-    // 验证必须选择相关订单
-    if (recordData.type === 'in' && !recordData.relatedOrderId) {
-      alert('采购入库必须选择采购单！');
-      return;
-    }
-    
-    if (recordData.type === 'out' && !recordData.relatedOrderId) {
-      alert('销售出库必须选择销售单！');
-      return;
-    }
-
-    const quantity = parseInt(recordData.quantity);
+    const quantity = parseInt(inData.quantity);
     const beforeStock = product.stock;
-    const afterStock = recordData.type === 'out' ? beforeStock - quantity : beforeStock + quantity;
+    const afterStock = beforeStock + quantity;
 
-    // 获取相关订单信息
+    // 获取采购订单信息
     let relatedOrderNo = '';
     let supplierInfo = null;
-    let customerInfo = null;
     
-    if (recordData.type === 'in' && recordData.relatedOrderId) {
-      const purchaseOrder = purchaseOrders.find(o => o.id === recordData.relatedOrderId);
+    if (inData.purchaseOrderId) {
+      const purchaseOrder = purchaseOrders.find(o => o.id === inData.purchaseOrderId);
       if (purchaseOrder) {
         relatedOrderNo = purchaseOrder.orderNo;
         supplierInfo = {
@@ -136,126 +171,249 @@ const InventoryManagement: React.FC<InventoryManagementProps> = ({
         };
       }
     }
-    
-    if (recordData.type === 'out' && recordData.relatedOrderId) {
-      const saleOrder = saleOrders.find(o => o.id === recordData.relatedOrderId);
-      if (saleOrder) {
-        relatedOrderNo = saleOrder.orderNo;
-        customerInfo = {
-          customerId: saleOrder.customerId,
-          customerName: saleOrder.customerName
-        };
-      }
-    }
 
     // 生成批次号
-    const batchNo = generateBatchNo(recordData.productId);
+    const batchNo = generateBatchNo(inData.productId);
 
     const newRecord = {
-      productId: recordData.productId,
+      productId: inData.productId,
       productName: product.name,
-      type: recordData.type,
-      quantity: recordData.type === 'out' ? -quantity : quantity,
+      type: 'in' as const,
+      quantity,
       beforeStock,
       afterStock,
-      reason: recordData.reason,
+      reason: inData.reason,
       batchNo,
-      relatedOrderId: recordData.relatedOrderId || undefined,
+      relatedOrderId: inData.purchaseOrderId || undefined,
       relatedOrderNo: relatedOrderNo || undefined,
       operatorId: 'current-user',
-      operatorName: recordData.operatorName,
+      operatorName: inData.operatorName,
     };
 
     onAddInventoryRecord(newRecord);
 
-    // 如果是入库，创建批次记录和批次移动记录
-    if (recordData.type === 'in') {
+    // 创建批次记录
+    const newBatch = {
+      batchNo,
+      productId: inData.productId,
+      productName: product.name,
+      quantity,
+      remainingQuantity: quantity,
+      purchasePrice: product.purchasePrice,
+      supplierId: supplierInfo?.supplierId || 'manual',
+      supplierName: supplierInfo?.supplierName || '手动入库',
+      purchaseOrderId: inData.purchaseOrderId || 'manual',
+      purchaseOrderNo: relatedOrderNo || '手动入库',
+      status: 'active' as const,
+    };
+    
+    onAddInventoryBatch(newBatch);
+    
+    // 创建批次移动记录
+    const newMovement = {
+      batchId: Date.now().toString(),
+      batchNo,
+      productId: inData.productId,
+      type: 'in' as const,
+      quantity,
+      remainingQuantity: quantity,
+      relatedOrderId: inData.purchaseOrderId || 'manual',
+      relatedOrderNo: relatedOrderNo || '手动入库',
+      relatedOrderType: 'purchase' as const,
+    };
+    
+    onAddBatchMovement(newMovement);
+
+    resetInForm();
+  };
+
+  // 出库处理
+  const handleOutSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    const product = products.find(p => p.id === outData.productId);
+    if (!product) return;
+
+    const quantity = parseInt(outData.quantity);
+    const beforeStock = product.stock;
+    const afterStock = beforeStock - quantity;
+
+    if (afterStock < 0) {
+      alert('库存不足！');
+      return;
+    }
+
+    // 获取销售订单信息
+    let relatedOrderNo = '';
+    
+    if (outData.saleOrderId) {
+      const saleOrder = saleOrders.find(o => o.id === outData.saleOrderId);
+      if (saleOrder) {
+        relatedOrderNo = saleOrder.orderNo;
+      }
+    }
+
+    // 自动分配批次（FIFO）
+    const availableBatches = getAvailableBatches(outData.productId);
+    let remainingQuantity = quantity;
+    const usedBatches: Array<{ batchId: string; batchNo: string; quantity: number }> = [];
+
+    for (const batch of availableBatches) {
+      if (remainingQuantity <= 0) break;
+      
+      const useQuantity = Math.min(remainingQuantity, batch.remainingQuantity);
+      usedBatches.push({
+        batchId: batch.id,
+        batchNo: batch.batchNo,
+        quantity: useQuantity,
+      });
+      
+      // 更新批次剩余数量
+      const newRemainingQuantity = batch.remainingQuantity - useQuantity;
+      onUpdateInventoryBatch(batch.id, { 
+        remainingQuantity: newRemainingQuantity,
+        status: newRemainingQuantity === 0 ? 'exhausted' : 'active'
+      });
+      
+      remainingQuantity -= useQuantity;
+
+      // 添加批次移动记录
+      const newMovement = {
+        batchId: batch.id,
+        batchNo: batch.batchNo,
+        productId: outData.productId,
+        type: 'out' as const,
+        quantity: useQuantity,
+        remainingQuantity: newRemainingQuantity,
+        relatedOrderId: outData.saleOrderId || 'manual',
+        relatedOrderNo: relatedOrderNo || '手动出库',
+        relatedOrderType: 'sale' as const,
+      };
+      onAddBatchMovement(newMovement);
+    }
+
+    const newRecord = {
+      productId: outData.productId,
+      productName: product.name,
+      type: 'out' as const,
+      quantity: -quantity,
+      beforeStock,
+      afterStock,
+      reason: outData.reason,
+      batchNo: usedBatches.map(b => b.batchNo).join(', '),
+      relatedOrderId: outData.saleOrderId || undefined,
+      relatedOrderNo: relatedOrderNo || undefined,
+      operatorId: 'current-user',
+      operatorName: outData.operatorName,
+    };
+
+    onAddInventoryRecord(newRecord);
+    resetOutForm();
+  };
+
+  // 调整处理
+  const handleAdjustSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    const product = products.find(p => p.id === adjustData.productId);
+    if (!product) return;
+
+    const quantity = parseInt(adjustData.quantity);
+    const adjustQuantity = adjustData.adjustType === 'increase' ? quantity : -quantity;
+    const beforeStock = product.stock;
+    const afterStock = beforeStock + adjustQuantity;
+
+    if (afterStock < 0) {
+      alert('调整后库存不能为负数！');
+      return;
+    }
+
+    const newRecord = {
+      productId: adjustData.productId,
+      productName: product.name,
+      type: 'adjust' as const,
+      quantity: adjustQuantity,
+      beforeStock,
+      afterStock,
+      reason: adjustData.reason,
+      operatorId: 'current-user',
+      operatorName: adjustData.operatorName,
+    };
+
+    onAddInventoryRecord(newRecord);
+
+    // 如果是增加库存，创建调整批次
+    if (adjustData.adjustType === 'increase') {
+      const batchNo = generateBatchNo(adjustData.productId);
+      
       const newBatch = {
         batchNo,
-        productId: recordData.productId,
+        productId: adjustData.productId,
         productName: product.name,
         quantity,
         remainingQuantity: quantity,
         purchasePrice: product.purchasePrice,
-        supplierId: supplierInfo?.supplierId || 'manual',
-        supplierName: supplierInfo?.supplierName || '手动入库',
-        purchaseOrderId: recordData.relatedOrderId || 'manual',
-        purchaseOrderNo: relatedOrderNo || '手动入库',
+        supplierId: 'adjust',
+        supplierName: '库存调整',
+        purchaseOrderId: 'adjust',
+        purchaseOrderNo: '库存调整',
         status: 'active' as const,
       };
       
       onAddInventoryBatch(newBatch);
-      
-      // 创建批次移动记录
-      const newMovement = {
-        batchId: Date.now().toString(),
-        batchNo,
-        productId: recordData.productId,
-        type: 'in' as const,
-        quantity,
-        remainingQuantity: quantity,
-        relatedOrderId: recordData.relatedOrderId || 'manual',
-        relatedOrderNo: relatedOrderNo || '手动入库',
-        relatedOrderType: 'purchase' as const,
-      };
-      
-      onAddBatchMovement(newMovement);
     }
 
-    resetForm();
+    resetAdjustForm();
   };
 
-  const resetForm = () => {
-    setRecordData({
+  const resetInForm = () => {
+    setInData({
       productId: '',
-      type: 'in',
       quantity: '',
-      reason: '',
-      relatedOrderId: '',
+      purchaseOrderId: '',
+      reason: '采购入库',
       operatorName: '系统管理员',
     });
-    setShowAddForm(false);
+    setShowInForm(false);
   };
 
-  // 根据选择的订单和商品，获取可入库数量
-  const getAvailableQuantityForIn = () => {
-    if (!recordData.relatedOrderId || !recordData.productId) return 0;
-    
-    const purchaseOrder = purchaseOrders.find(o => o.id === recordData.relatedOrderId);
-    if (!purchaseOrder) return 0;
-    
-    const item = purchaseOrder.items.find(i => i.productId === recordData.productId);
-    if (!item) return 0;
-    
-    return item.quantity - item.receivedQuantity;
+  const resetOutForm = () => {
+    setOutData({
+      productId: '',
+      quantity: '',
+      saleOrderId: '',
+      selectedBatches: [],
+      reason: '销售出库',
+      operatorName: '系统管理员',
+    });
+    setShowOutForm(false);
   };
 
-  // 根据选择的订单和商品，获取可出库数量
-  const getAvailableQuantityForOut = () => {
-    if (!recordData.relatedOrderId || !recordData.productId) return 0;
-    
-    const saleOrder = saleOrders.find(o => o.id === recordData.relatedOrderId);
-    if (!saleOrder) return 0;
-    
-    const item = saleOrder.items.find(i => i.productId === recordData.productId);
-    if (!item) return 0;
-    
-    return item.quantity - item.shippedQuantity;
+  const resetAdjustForm = () => {
+    setAdjustData({
+      productId: '',
+      quantity: '',
+      adjustType: 'increase',
+      reason: '库存调整',
+      operatorName: '系统管理员',
+    });
+    setShowAdjustForm(false);
   };
 
-  // 获取选中订单中的商品列表
-  const getOrderProducts = () => {
-    if (!recordData.relatedOrderId) return [];
+  // 获取采购单中的商品
+  const getPurchaseOrderProducts = () => {
+    if (!inData.purchaseOrderId) return [];
     
-    if (recordData.type === 'in') {
-      const purchaseOrder = purchaseOrders.find(o => o.id === recordData.relatedOrderId);
-      return purchaseOrder?.items.filter(item => item.receivedQuantity < item.quantity) || [];
-    } else if (recordData.type === 'out') {
-      const saleOrder = saleOrders.find(o => o.id === recordData.relatedOrderId);
-      return saleOrder?.items.filter(item => item.shippedQuantity < item.quantity) || [];
-    }
+    const purchaseOrder = purchaseOrders.find(o => o.id === inData.purchaseOrderId);
+    return purchaseOrder?.items.filter(item => item.receivedQuantity < item.quantity) || [];
+  };
+
+  // 获取销售单中的商品
+  const getSaleOrderProducts = () => {
+    if (!outData.saleOrderId) return [];
     
-    return [];
+    const saleOrder = saleOrders.find(o => o.id === outData.saleOrderId);
+    return saleOrder?.items.filter(item => item.shippedQuantity < item.quantity) || [];
   };
 
   const getTypeColor = (type: string) => {
@@ -311,13 +469,29 @@ const InventoryManagement: React.FC<InventoryManagementProps> = ({
           <h1 className="text-3xl font-bold text-slate-900">库存管理</h1>
           <p className="text-slate-600 mt-1">管理库存记录、批次信息和库存调整</p>
         </div>
-        <button
-          onClick={() => setShowAddForm(true)}
-          className="bg-purple-600 text-white px-4 py-2 rounded-lg hover:bg-purple-700 transition-colors flex items-center space-x-2"
-        >
-          <Plus className="h-4 w-4" />
-          <span>库存操作</span>
-        </button>
+        <div className="flex items-center space-x-3">
+          <button
+            onClick={() => setShowInForm(true)}
+            className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors flex items-center space-x-2"
+          >
+            <TrendingUp className="h-4 w-4" />
+            <span>入库</span>
+          </button>
+          <button
+            onClick={() => setShowOutForm(true)}
+            className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition-colors flex items-center space-x-2"
+          >
+            <TrendingDown className="h-4 w-4" />
+            <span>出库</span>
+          </button>
+          <button
+            onClick={() => setShowAdjustForm(true)}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors flex items-center space-x-2"
+          >
+            <RotateCcw className="h-4 w-4" />
+            <span>调整</span>
+          </button>
+        </div>
       </div>
 
       {/* 导航标签 */}
@@ -327,7 +501,6 @@ const InventoryManagement: React.FC<InventoryManagementProps> = ({
             { key: 'records', label: '库存记录', icon: Package },
             { key: 'batches', label: '批次管理', icon: Archive },
             { key: 'movements', label: '批次移动', icon: Truck },
-            { key: 'adjust', label: '库存调整', icon: RotateCcw },
           ].map((tab) => {
             const Icon = tab.icon;
             return (
@@ -586,200 +759,369 @@ const InventoryManagement: React.FC<InventoryManagementProps> = ({
         </div>
       )}
 
-      {/* 库存调整 */}
-      {activeTab === 'adjust' && (
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-          <div className="text-center py-12">
-            <RotateCcw className="h-12 w-12 text-slate-300 mx-auto mb-4" />
-            <p className="text-slate-500 text-lg mb-2">库存调整功能</p>
-            <p className="text-slate-400">用于处理盘点差异、损耗等库存调整</p>
-          </div>
-        </div>
-      )}
-
-      {/* 添加库存记录表单 */}
-      {showAddForm && (
+      {/* 入库表单 */}
+      {showInForm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-            <h3 className="text-xl font-semibold text-slate-900 mb-4">库存操作</h3>
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-semibold text-slate-900">商品入库</h3>
+              <button
+                onClick={() => setShowInForm(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+            <form onSubmit={handleInSubmit} className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">操作类型 *</label>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">采购订单（可选）</label>
                   <select
-                    required
-                    value={recordData.type}
-                    onChange={(e) => setRecordData({ 
-                      ...recordData, 
-                      type: e.target.value as 'in' | 'out' | 'adjust',
-                      relatedOrderId: '', // 重置订单选择
-                      productId: '' // 重置商品选择
-                    })}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                    value={inData.purchaseOrderId}
+                    onChange={(e) => setInData({ ...inData, purchaseOrderId: e.target.value, productId: '' })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
                   >
-                    <option value="in">采购入库</option>
-                    <option value="out">销售出库</option>
-                    <option value="adjust">库存调整</option>
+                    <option value="">手动入库</option>
+                    {availablePurchaseOrders.map((order) => (
+                      <option key={order.id} value={order.id}>
+                        {order.orderNo} - {order.supplierName}
+                      </option>
+                    ))}
                   </select>
                 </div>
-                
-                {/* 采购入库时选择采购单 */}
-                {recordData.type === 'in' && (
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">选择采购单 *</label>
-                    <select
-                      required
-                      value={recordData.relatedOrderId}
-                      onChange={(e) => setRecordData({ 
-                        ...recordData, 
-                        relatedOrderId: e.target.value,
-                        productId: '' // 重置商品选择
-                      })}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-                    >
-                      <option value="">请选择采购单</option>
-                      {availablePurchaseOrders.map((order) => (
-                        <option key={order.id} value={order.id}>
-                          {order.orderNo} - {order.supplierName}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-                
-                {/* 销售出库时选择销售单 */}
-                {recordData.type === 'out' && (
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">选择销售单 *</label>
-                    <select
-                      required
-                      value={recordData.relatedOrderId}
-                      onChange={(e) => setRecordData({ 
-                        ...recordData, 
-                        relatedOrderId: e.target.value,
-                        productId: '' // 重置商品选择
-                      })}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-                    >
-                      <option value="">请选择销售单</option>
-                      {availableSaleOrders.map((order) => (
-                        <option key={order.id} value={order.id}>
-                          {order.orderNo} - {order.customerName}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-                
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">商品 *</label>
-                  <select
-                    required
-                    value={recordData.productId}
-                    onChange={(e) => setRecordData({ ...recordData, productId: e.target.value })}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-                  >
-                    <option value="">请选择商品</option>
-                    {recordData.type === 'adjust' ? (
-                      // 库存调整时显示所有商品
-                      products.map((product) => (
-                        <option key={product.id} value={product.id}>
-                          {product.name} - {product.specification} (当前库存: {product.stock})
-                        </option>
-                      ))
-                    ) : (
-                      // 入库/出库时显示订单中的商品
-                      getOrderProducts().map((item) => {
-                        const product = products.find(p => p.id === item.productId);
-                        const availableQty = recordData.type === 'in' 
-                          ? item.quantity - item.receivedQuantity
-                          : item.quantity - item.shippedQuantity;
-                        return (
+                  <div className="flex space-x-2">
+                    <select
+                      required
+                      value={inData.productId}
+                      onChange={(e) => setInData({ ...inData, productId: e.target.value })}
+                      className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                    >
+                      <option value="">请选择商品</option>
+                      {inData.purchaseOrderId ? (
+                        getPurchaseOrderProducts().map((item) => (
                           <option key={item.productId} value={item.productId}>
-                            {item.productName} (可操作: {availableQty})
+                            {item.productName} (可入库: {item.quantity - item.receivedQuantity})
                           </option>
-                        );
-                      })
-                    )}
-                  </select>
+                        ))
+                      ) : (
+                        products.map((product) => (
+                          <option key={product.id} value={product.id}>
+                            {product.name} - {product.specification}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setScannerType('in');
+                        setShowScanner(true);
+                      }}
+                      className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                      title="扫描条码"
+                    >
+                      <Camera className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
-                
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    数量 *
-                    {recordData.type === 'in' && recordData.relatedOrderId && recordData.productId && (
-                      <span className="text-sm text-green-600 ml-2">
-                        (最大可入库: {getAvailableQuantityForIn()})
-                      </span>
-                    )}
-                    {recordData.type === 'out' && recordData.relatedOrderId && recordData.productId && (
-                      <span className="text-sm text-red-600 ml-2">
-                        (最大可出库: {Math.min(getAvailableQuantityForOut(), products.find(p => p.id === recordData.productId)?.stock || 0)})
-                      </span>
-                    )}
-                  </label>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">入库数量 *</label>
                   <input
                     type="number"
                     min="1"
-                    max={
-                      recordData.type === 'in' && recordData.relatedOrderId && recordData.productId
-                        ? getAvailableQuantityForIn()
-                        : recordData.type === 'out' && recordData.relatedOrderId && recordData.productId
-                        ? Math.min(getAvailableQuantityForOut(), products.find(p => p.id === recordData.productId)?.stock || 0)
-                        : undefined
-                    }
                     required
-                    value={recordData.quantity}
-                    onChange={(e) => setRecordData({ ...recordData, quantity: e.target.value })}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                    value={inData.quantity}
+                    onChange={(e) => setInData({ ...inData, quantity: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">操作员</label>
+                  <input
+                    type="text"
+                    value={inData.operatorName}
+                    onChange={(e) => setInData({ ...inData, operatorName: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
                   />
                 </div>
               </div>
-              
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">操作原因 *</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">入库原因 *</label>
                 <input
                   type="text"
                   required
-                  value={recordData.reason}
-                  onChange={(e) => setRecordData({ ...recordData, reason: e.target.value })}
-                  placeholder={
-                    recordData.type === 'in' ? '采购入库' :
-                    recordData.type === 'out' ? '销售出库' : '库存调整'
-                  }
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                  value={inData.reason}
+                  onChange={(e) => setInData({ ...inData, reason: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500"
                 />
               </div>
-              
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">操作员</label>
-                <input
-                  type="text"
-                  value={recordData.operatorName}
-                  onChange={(e) => setRecordData({ ...recordData, operatorName: e.target.value })}
-                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
-                />
-              </div>
-              
               <div className="flex justify-end space-x-4 pt-4">
                 <button
                   type="button"
-                  onClick={resetForm}
+                  onClick={resetInForm}
                   className="px-4 py-2 text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50"
                 >
                   取消
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
+                  className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
                 >
-                  确认操作
+                  确认入库
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
+
+      {/* 出库表单 */}
+      {showOutForm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-semibold text-slate-900">商品出库</h3>
+              <button
+                onClick={() => setShowOutForm(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+            <form onSubmit={handleOutSubmit} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">销售订单（可选）</label>
+                  <select
+                    value={outData.saleOrderId}
+                    onChange={(e) => setOutData({ ...outData, saleOrderId: e.target.value, productId: '' })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                  >
+                    <option value="">手动出库</option>
+                    {availableSaleOrders.map((order) => (
+                      <option key={order.id} value={order.id}>
+                        {order.orderNo} - {order.customerName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">商品 *</label>
+                  <div className="flex space-x-2">
+                    <select
+                      required
+                      value={outData.productId}
+                      onChange={(e) => setOutData({ ...outData, productId: e.target.value })}
+                      className="flex-1 px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                    >
+                      <option value="">请选择商品</option>
+                      {outData.saleOrderId ? (
+                        getSaleOrderProducts().map((item) => (
+                          <option key={item.productId} value={item.productId}>
+                            {item.productName} (可出库: {item.quantity - item.shippedQuantity})
+                          </option>
+                        ))
+                      ) : (
+                        products.filter(p => p.stock > 0).map((product) => (
+                          <option key={product.id} value={product.id}>
+                            {product.name} - {product.specification} (库存: {product.stock})
+                          </option>
+                        ))
+                      )}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setScannerType('out');
+                        setShowScanner(true);
+                      }}
+                      className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                      title="扫描条码"
+                    >
+                      <Camera className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">出库数量 *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max={outData.productId ? products.find(p => p.id === outData.productId)?.stock || 0 : undefined}
+                    required
+                    value={outData.quantity}
+                    onChange={(e) => setOutData({ ...outData, quantity: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                  />
+                  {outData.productId && (
+                    <p className="text-sm text-slate-500 mt-1">
+                      当前库存: {products.find(p => p.id === outData.productId)?.stock || 0}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">操作员</label>
+                  <input
+                    type="text"
+                    value={outData.operatorName}
+                    onChange={(e) => setOutData({ ...outData, operatorName: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                  />
+                </div>
+              </div>
+              
+              {/* 显示可用批次 */}
+              {outData.productId && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">可用批次（将按FIFO自动分配）</label>
+                  <div className="max-h-32 overflow-y-auto border border-slate-200 rounded-lg">
+                    {getAvailableBatches(outData.productId).map((batch) => (
+                      <div key={batch.id} className="flex justify-between items-center p-2 border-b border-slate-100 last:border-b-0">
+                        <div>
+                          <p className="text-sm font-medium text-slate-900">{batch.batchNo}</p>
+                          <p className="text-xs text-slate-500">
+                            剩余: {batch.remainingQuantity} | 创建: {new Date(batch.createTime).toLocaleDateString()}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">出库原因 *</label>
+                <input
+                  type="text"
+                  required
+                  value={outData.reason}
+                  onChange={(e) => setOutData({ ...outData, reason: e.target.value })}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                />
+              </div>
+              <div className="flex justify-end space-x-4 pt-4">
+                <button
+                  type="button"
+                  onClick={resetOutForm}
+                  className="px-4 py-2 text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+                >
+                  确认出库
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 调整表单 */}
+      {showAdjustForm && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-semibold text-slate-900">库存调整</h3>
+              <button
+                onClick={() => setShowAdjustForm(false)}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+            <form onSubmit={handleAdjustSubmit} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">商品 *</label>
+                  <select
+                    required
+                    value={adjustData.productId}
+                    onChange={(e) => setAdjustData({ ...adjustData, productId: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    <option value="">请选择商品</option>
+                    {products.map((product) => (
+                      <option key={product.id} value={product.id}>
+                        {product.name} - {product.specification} (当前库存: {product.stock})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">调整类型 *</label>
+                  <select
+                    required
+                    value={adjustData.adjustType}
+                    onChange={(e) => setAdjustData({ ...adjustData, adjustType: e.target.value as 'increase' | 'decrease' })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    <option value="increase">增加库存</option>
+                    <option value="decrease">减少库存</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">调整数量 *</label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    value={adjustData.quantity}
+                    onChange={(e) => setAdjustData({ ...adjustData, quantity: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">操作员</label>
+                  <input
+                    type="text"
+                    value={adjustData.operatorName}
+                    onChange={(e) => setAdjustData({ ...adjustData, operatorName: e.target.value })}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">调整原因 *</label>
+                <input
+                  type="text"
+                  required
+                  value={adjustData.reason}
+                  onChange={(e) => setAdjustData({ ...adjustData, reason: e.target.value })}
+                  placeholder="盘点差异、损耗、其他..."
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <div className="flex justify-end space-x-4 pt-4">
+                <button
+                  type="button"
+                  onClick={resetAdjustForm}
+                  className="px-4 py-2 text-slate-600 border border-slate-300 rounded-lg hover:bg-slate-50"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                >
+                  确认调整
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 条码扫描器 */}
+      <BarcodeScanner
+        isOpen={showScanner}
+        onScan={handleBarcodeScan}
+        onClose={() => setShowScanner(false)}
+      />
     </div>
   );
 };
